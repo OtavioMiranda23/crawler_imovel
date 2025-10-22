@@ -5,38 +5,47 @@
 
 
 # useful for handling different item types with a single interface
+from datetime import date
 import json
 import os
 from itemadapter import ItemAdapter
 from scrapy.exceptions import DropItem
+import sqlite3
+
 
 
 class UniqueJSONPipeline:
     def __init__(self):
         self.items = []
-        self.existing_links = set()
-        self.filename = "resultados.json"
-        
+        self.conexao = None
+        self.cursor = None
+
     def open_spider(self, spider):
-        if os.path.exists(self.filename):
-            with open(self.filename, "r", encoding='utf-8') as f:
-                try:
-                    existing_data = json.load(f)
-                    self.items = existing_data
-                    self.existing_links = {item.get("link") for item in existing_data if "link" in item}
-                except json.JSONDecodeError:
-                    self.items = []
-                    self.existing_links = set()
+        self.conexao = sqlite3.connect("imoveis.db")
+        self.cursor = self.conexao.cursor()
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS imoveis (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            endereco TEXT NOT NULL,
+            preco REAL NOT NULL,
+            data_cadastro TEXT NOT NULL,
+            disponivel BOOLEAN NOT NULL,
+            site TEXT NOT NULL,
+            link TEXT UNIQUE NOT NULL UNIQUE,
+            qtd_quartos INTEGER NOT NULL
+        )
+        """)
+
+        self.conexao.commit()
 
     def process_item(self, item, spider):
-        unique_key = item.get("link")
-        if unique_key and unique_key in self.existing_links:
-            raise DropItem(f"Duplicate item found: {unique_key}")
-        else:
-            self.existing_links.add(unique_key)
-            self.items.append(dict(item))
-            return item
+        preco = item.get("valorTotal").replace("R$", "").replace(".", "").replace(",", ".").strip()
+        self.cursor.execute("""
+        INSERT INTO imoveis (endereco, preco, data_cadastro, disponivel, site, link, qtd_quartos)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (item.get("endereco"), preco, date.today().isoformat(), True, "Quinto Andar", item.get("link"), 2))
+        return item
         
     def close_spider(self, spider):
-        with open(self.filename, "w", encoding="utf-8") as f:
-            json.dump(self.items, f, ensure_ascii=False, indent=2)
+        self.conexao.commit()
+        self.conexao.close()
